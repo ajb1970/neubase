@@ -6,8 +6,6 @@ setup(
     url='https://github.com/ajb1970/neubase',
     author='Andrew Baisley',
     author_email='andrew.baisley@gmail.com',
-    # Needed to actually package something
-    packages=['neubase'],
     # Needed for dependencies
     install_requires=['pandas'],
     # *strongly* suggested for sharing
