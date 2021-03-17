@@ -6,14 +6,15 @@ Created on Fri Dec 13 09:57:03 2019
 """
 
 from sqlite3 import connect
-from os import listdir, path
-from pandas import DataFrame, Index, ExcelWriter, read_csv, read_excel, read_sql
+from os import listdir, path, mkdir
+from pandas import DataFrame, Index, ExcelWriter, read_csv, read_excel, read_sql, to_numeric, isnull
+from numpy import random
 from re import sub
 from json import dumps, loads
 from datetime import datetime
-from tarfile import open as tarfile_open
+import tarfile
 
-na_clean=['-','*','..','.','SUPP','NA','NP','NE','NaN','DNS']
+na_values=['-','*','..','.','SUPP','NA','NP','NE','NaN','DNS','No Pay Details Submitted']
 
 class NEUBase():
   """NEUBase database connection
@@ -37,24 +38,53 @@ class NEUBase():
 
     self.list_tables()
 
-    if not meta is None:
-
-      if 'meta' in self.table_list:
+    if '__meta__' in self.table_list_full:
+      if not meta is None:
         raise ValueError('Meta table already exists')
       else:
-        keys = list(meta.keys())
-        values = [ meta[key] for key in keys ]
-        meta_df = DataFrame( {'values':values}, index=Index( keys ))
         self.connect()
-        meta_df.to_sql( "meta", self.connection )
+        self.meta = read_sql('SELECT * FROM __meta__ WHERE table_name="__db__"', self.connection, index_col='key' ).drop(columns=['table_name']).to_dict()['value']
+        self.close()
+    else:
+      if meta is None:
+        self.connect()
+        DataFrame(
+            data={
+                'table_name':[],
+                'value':[],
+                },
+            index=Index([], name='key')
+        ).to_sql("__meta__", self.connection)
+        self.close()
+      else:
+        keys = list(meta.keys())
+        table_name = ['__db__']*len(keys)
+        values = [ meta[key] for key in keys ]
+        meta_df = DataFrame( {'values':values, 'table_name':table_name}, index=Index(keys, name='key'))
+        self.connect()
+        meta_df.to_sql('__meta__', self.connection)
         self.close()
         self.meta = meta_df
 
-    if 'meta' in self.table_list:
+    if not '__columns__' in self.table_list_full:
       self.connect()
-      self.meta = read_sql( "SELECT * FROM meta", self.connection, index_col='key' ).to_dict()['value']
+      DataFrame(
+          data={
+              'table_name':[],
+              'input_name':[],
+              'mc_name':[],
+              'an_name':[],
+              'dtype':[],
+              'mc_display_order':[],
+              'mc_tag':[],
+              'mc_dtypes':[],
+              'output_name':[],
+              'output_format':[],
+              'output_width':[],
+              },
+          index=Index([], name='db_name')
+      ).to_sql("__columns__", self.connection, if_exists='append')
       self.close()
-      self.meta = meta_df
 
 
   def connect(self):
@@ -64,6 +94,12 @@ class NEUBase():
     """
     self.connection = connect( self.file_location )
     self.cursor = self.connection.cursor()
+
+
+  def commit(self):
+    """Saves the database changes
+    """
+    self.connection.commit()
 
 
   def close(self):
@@ -87,7 +123,7 @@ class NEUBase():
     self.view_list = [ table[0] for table in self.cursor.execute("SELECT name FROM sqlite_master WHERE type ='view' AND name NOT LIKE 'sqlite_%';").fetchall() ]
     self.close()
 
-    self.table_list = [ table for table in self.table_list_full if not( table[-5:] == '_meta' or table[-8:] == '_columns' or table == 'meta' ) ]
+    self.table_list = [ table for table in self.table_list_full if table!='__meta__' or table!='__columns__' ]
 
     return self.table_list
 
@@ -155,6 +191,9 @@ class NEUTable():
     self.neubase = neubase
     self.data = data
 
+    if name in ['__db__', '__meta__', '__columns__']:
+      raise ValueError(f'{name} cannot be used as a table name; it is reserved for system use.')
+
     if not data is None:
       self.column_names_group = 'input_name'
 
@@ -167,17 +206,27 @@ class NEUTable():
       self.read_meta_file( meta_file )
       self.neubase = NEUBase( self.meta['db_file'] )
 
-    if name in self.neubase.list_tables():
+    elif name in self.neubase.list_tables():
       self.read_meta_tables()
 
 
   def create_table(self, meta_file=None):
+    """Create an SQL table.
+
+    Args:
+      meta_file(str) location of file with meta data to intitiate table.
+
+    Initiation finds the file self.meta_file if meta_file is None.
+
+    Values from self.data are inserted if populated.
+    Otherwise, self.read_data_from_file() reads values in.
+    """
 
     if self.name in self.neubase.list_tables():
       raise ValueError( f"{self.name} already exists.")
 
     if meta_file is None and self.meta_file is None:
-      self.make_meta_from_data()
+      self.create_meta_from_data()
 
     if self.data is None:
       self.data = self.read_data_from_file()
@@ -193,8 +242,7 @@ class NEUTable():
         UPDATE {self.name}
         SET {dumps(column)} = {dumps(value)}
         WHERE {where};
-        """
-
+    """
     self.neubase.connect()
     self.neubase.cursor.execute( sql )
     self.neubase.connection.commit()
@@ -206,24 +254,21 @@ class NEUTable():
         UPDATE {self.name}
         SET {" = ?, ".join(columns)+" = ?"}
         WHERE {where}
-        """
-
+    """
     self.neubase.connect()
     self.neubase.cursor.execute( sql, tuple(values) )
     self.neubase.connection.commit()
     self.neubase.close()
 
 
-  def make_meta_from_data(self):
+  def create_meta_from_data(self):
     self.meta_file = f'data/{self.name}_meta.xlsx'
-    self.make_columns_meta()
+    self.create_columns_meta()
     sql_index = list(self.data.index.names)
     name_map = {v: k for k, v in self.columns['input_name'].to_dict().items()}
     sql_index  = [ name_map[ i ] for i in sql_index ]
-
     if not 'meta' in self.__dict__.keys():
       self.meta = {}
-
     self.meta['name']=self.name
     self.meta['db_file']=self.neubase.file_location
     self.meta['meta_file']=self.meta_file
@@ -231,15 +276,11 @@ class NEUTable():
 
 
   def read_meta_file(self, meta_file=None):
-
     if meta_file is None:
-
       if 'meta_file' in self.meta.keys():
         meta_file = self.meta['meta_file']
-
       else:
         meta_file = self.meta_file
-
     self.meta = read_excel( meta_file, sheet_name='Meta', index_col=0 ).to_dict()['value']
     self.convert_meta_values_from_json()
     self.columns = read_excel( meta_file, sheet_name='Columns' )
@@ -248,46 +289,40 @@ class NEUTable():
 
   def read_meta_tables(self):
     self.neubase.connect()
-    self.meta = read_sql( f'SELECT * FROM "{self.name}_meta"', self.neubase.connection, index_col='key' ).to_dict()['value']
+    self.meta = read_sql( f'SELECT key, value FROM __meta__ WHERE table_name="{self.name}"', self.neubase.connection, index_col='key' ).to_dict()['value']
     self.convert_meta_values_from_json()
-    self.columns = read_sql( f'SELECT * FROM "{self.name}_columns"', self.neubase.connection, index_col='db_name' )
+    self.columns = read_sql( f'SELECT * FROM __columns__ WHERE table_name="{self.name}"', self.neubase.connection, index_col='db_name' ).drop(columns=['table'])
     self.neubase.close()
 
 
   def read_data_from_file(self):
-    options = {}
+    options = { 'na_values' : na_values }
 
-    for option in [ column for column in ['skiprows','usecols','names','sheet_name', 'index_col', 'dtypes' ] if column in self.meta.keys() ]:
-
-      if not self.meta[ option ] is None:
-        options[ option ] = self.meta[ option ]
+    for option in [column for column in ['skiprows', 'usecols', 'names', 'sheet_name', 'index_col', 'dtypes'] if column in self.meta.keys()]:
+      if not self.meta[option] is None:
+        options[option] = self.meta[option]
 
     if 'columns' in self.__dict__.keys():
       dtypes = self.columns[['input_name','dtype']].set_index('input_name').to_dict()['dtype']
-
     elif 'dtypes' in self.meta.keys():
       dtypes = self.meta['dtypes']
-
     else:
       dtypes = {}
 
     if self.meta['file'][-4:].lower() == '.csv':
       options[ 'dtype' ] = dtypes
-      self.data = read_csv(self.meta['file'], **options )
-
+      self.data = read_csv(self.meta['file'], **options)
     else:
-
       if 'index_col' in options.keys():
         index_col= options['index_col']
         del(options['index_col'])
-
       else:
         index_col= None
-
       self.data = read_excel(self.meta['file'], **options )
-
       for key in [ key for key in dtypes.keys() if key in self.data.columns]:
         self.data[key] = self.data[key].astype( dtypes[key], errors='ignore')
+        if dtypes[key][:3] == 'int' or dtypes[key][:5] == 'float':
+          to_numeric( self.data[key], errors='coerce' )
 
       if not index_col is None:
         self.data.set_index( self.data.columns[index_col], inplace=True )
@@ -308,31 +343,25 @@ class NEUTable():
 
 
   def query(self, sql, index_col=None):
-
     if index_col is None:
       index_col = self.meta['sql_index']
-
     data = self.neubase.query( sql, index_col=index_col )
     return data
 
 
   def test_data_meta_match(self):
-    return sorted(self.data.columns.tolist() + list(self.data.index.names)) == sorted(self.columns.index.tolist())
+    return sorted(self.data.columns.tolist() + list(self.data.index.names)) == sorted(self.data.index.tolist())
 
 
   def overwrite_data_table(self):
-
     if self.column_names_group != 'db_name':
-      raise ValueError(f"Data columns are from '{self.column_names_group}' not 'db_name'.")
+      self.rename_data_column_names()
 
-    if not(self.test_data_meta_match()):
+    if self.test_data_meta_match():
       raise ValueError(f"The data columns and column meta do not match.")
 
-    if f'{self.name}' in self.neubase.list_tables():
-      self.delete_data_table()
-
     self.neubase.connect()
-    self.data.to_sql( self.name, self.neubase.connection )
+    self.data.to_sql(self.name, self.neubase.connection, if_exists='replace')
     self.neubase.close()
     self.neubase.list_tables()
 
@@ -346,10 +375,15 @@ class NEUTable():
 
   def delete_meta_tables(self):
     self.neubase.connect()
-    self.neubase.cursor.execute( f'DROP table "{self.name}_meta";' )
-    self.neubase.cursor.execute( f'DROP table "{self.name}_columns";' )
+    self.neubase.cursor.execute( f'DELETE FROM __meta__ WHERE table_name="{self.name}";' )
+    self.neubase.cursor.execute( f'DELETE FROM __columns__ WHERE table_name="{self.name}";' )
     self.neubase.connection.commit()
     self.neubase.close()
+
+
+  def delete(self):
+    self.delete_data_table()
+    self.delete_meta_tables()
 
 
   def delete_rows_from_data_table(self, where):
@@ -368,12 +402,6 @@ class NEUTable():
 
 
   def insert_data_rows(self, columns, values):
-    """Method: inserts values into the table for the columns
-
-    params:
-      columns: (list) of column headings
-      values: (list) of list of values to insert
-    """
     col_str = '"' + '", "'.join(columns) + '"'
     val_str = (" ?,"*len(values[0]))[:-1]
     val_data = [ tuple(vs) for vs in values ]
@@ -381,7 +409,7 @@ class NEUTable():
     sql = f"""
         INSERT INTO {self.name}({ col_str })
         VALUES({ val_str })
-        """
+    """
 
     self.neubase.connect()
     self.neubase.cursor.executemany(sql, val_data)
@@ -390,62 +418,36 @@ class NEUTable():
 
 
   def insert_data_row(self, columns, values):
-    """Method: inserts one row of values into the table for the columns
-
-    params:
-      columns: (list) of column headings
-      values: (list) of values to insert
-    """
     self.insert_data_rows(columns, [values])
 
 
   def update_meta_tables(self):
-    """Method: updates the meta and columns tables using the current values from the class
-    """
     self.neubase.connect()
 
-    for table in ['meta','columns']:
+    for table in ['__meta__','__columns__']:
+      sql = f'DELETE FROM {table} WHERE table_name="{self.name}";'
+      self.neubase.cursor.execute( sql )
+      self.neubase.connection.commit()
 
-      if f'{self.name}_{table}' in self.neubase.table_list_full:
-        sql = f'DROP table "{self.name}_{table}";'
-        self.neubase.cursor.execute( sql )
-        self.neubase.connection.commit()
-
-    self.make_meta_df().to_sql( f"{self.name}_meta", self.neubase.connection )
-    self.columns.to_sql( f"{self.name}_columns", self.neubase.connection )
+    self.create_meta_df().assign(table_name=lambda x: self.name).to_sql('__meta__', self.neubase.connection, if_exists='append')
+    self.columns.assign(table_name=lambda x: self.name).to_sql('__columns__', self.neubase.connection, if_exists='append')
     self.neubase.close()
     self.neubase.list_tables()
 
 
   def update_meta_file(self, meta_file=None):
-    """Method: replaces the meta file with a new one created from the current meta and columns data of the class
-
-    params:
-      meta_file: optional (string) file location to save the meta file
-        default value: meta_file in meta
-    """
     if meta_file is None:
-
       if 'meta_file' in self.meta.keys():
         meta_file = self.meta['meta_file']
-
       else:
         meta_file = self.meta_file
-
     writer = ExcelWriter( meta_file, engine='xlsxwriter' )
-    meta_df = self.make_meta_df()
+    meta_df = self.create_meta_df()
     meta_df.to_excel( writer, sheet_name='Meta')
     self.columns.to_excel( writer, sheet_name='Columns')
     writer.save()
 
   def rename_data_column_names(self, new_column_names_group='db_name'):
-    """Method: rename the column headings of DataFrame (self.data) holding the table data be renamed using values from columns.
-
-    params:
-      new_column_names_group: (string) with the new column heading
-        default: 'db_name'
-    """
-
     if new_column_names_group == self.column_names_group:
       print(f'Column names group unchanged, already {new_column_names_group}.')
       return
@@ -462,10 +464,8 @@ class NEUTable():
     new_index_names = []
 
     for i in self.data.index.names:
-
       if i in old_column_names_group_list:
         new_index_names.append(name_map[i])
-
       else:
         new_index_names.append(i)
 
@@ -473,9 +473,7 @@ class NEUTable():
     self.column_names_group = new_column_names_group
 
 
-  def make_meta_df(self):
-    """Method: Generates and returns a DataFrame with the values from self.meta
-    """
+  def create_meta_df(self):
     meta_data = self.convert_meta_values_to_json()
     meta_keys = list(meta_data.keys())
     meta_values = [ meta_data[key] for key in meta_keys ]
@@ -486,8 +484,9 @@ class NEUTable():
         )
 
 
-  def make_columns_meta(self):
-    """Generates self.columns from self.data .
+  def create_columns_meta(self):
+    """Generates a the value self.columns .
+    self.columns: class:pandas:DataFrame
     """
 
     input_names = list( self.data.index.names ) + self.data.columns.tolist()
@@ -511,71 +510,56 @@ class NEUTable():
       else:
         mc_dtypes.append( 'number' )
 
-    output_format = []
+    output_formats = []
 
     for dtype in dtypes:
 
       if dtype[:5] == 'float':
-        output_format.append( 'float' )
+        output_formats.append( 'float' )
+
+      elif dtype[:3] == 'int':
+        output_formats.append( 'int' )
 
       else:
-        output_format.append( 'str' )
+        output_formats.append( 'str' )
 
     mc_col_nums = list( range( len( input_names ) ) )
 
     self.columns = DataFrame(
         data={
-            'input_name' : input_names,
-            'mc_name' : mc_names,
-            'an_name' : an_names,
-            'dtype' : dtypes,
-            'mc_display_order' : mc_col_nums,
-            'mc_tag' : mc_tag,
-            'mc_dtypes' : mc_dtypes,
-            'output_name' : output_names,
-            'output_width' : [20] * len( input_names )
+            'input_name': input_names,
+            'mc_name': mc_names,
+            'an_name': an_names,
+            'dtype': dtypes,
+            'mc_display_order': mc_col_nums,
+            'mc_tag': mc_tag,
+            'mc_dtypes': mc_dtypes,
+            'output_name': output_names,
+            'output_format': output_formats,
+            'output_width': [20] * len( input_names )
             },
         index=Index( db_names, name='db_name')
         )
 
 
   def convert_meta_values_from_json(self):
-    """Method: converts self.meta values from JSON string where possible.
-    """
     for value in self.meta.keys():
-
         if not self.meta[value] is None:
-
           try:
             self.meta[ value ] = loads( self.meta[ value ] )
-
           except:
             pass
 
 
   def convert_meta_values_to_json(self):
-    """Method: converts self.meta values to JSON string where possible.
-    Returns: (dict) of meta
-    """
     meta = self.meta.copy()
-
     for value in meta.keys():
-
       if type(meta[value]) in [list,dict]:
         meta[ value ] = dumps( meta[ value ] )
-
     return meta
 
 
   def generate_slice_columns_meta(self, columns_list, column_names_group):
-    """Method: returns a slice of DataFrame columns
-
-    params:
-      columns_list: (list) of columns to include in DataFrame
-      column_names_group: (string) name of column heading for columns_list values
-    Returns: (DataFrame) columns table
-    """
-
     if column_names_group in self.columns.columns:
       return self.columns.loc[ self.columns[ column_names_group ].isin( columns_list ) ].copy()
 
@@ -586,27 +570,149 @@ class NEUTable():
       raise ValueError( f'{dumps(column_names_group)} not found in either columns or index' )
 
 
-def to_alphanumeric( text ):
-  """Function: strips non-alphanumeric text from string
+  def excel_out(
+      self,
+      col_color=None,
+      header=None,
+      footer=None,
+      fit_to_columns = False,
+      notes = None,
+      wrap_cols = [],
+      freeze_cols = None
+      ):
 
-  params:
-    text: (string) with text
-  Returns:
-    (string)
-  """
+    if 'output_format' in self.columns.columns:
+      col_format = [self.columns.output_format.loc[col] for col in self.data.columns]
+    else:
+      col_format = [self.columns.dtype.loc[col] for col in self.data.columns]
+
+    col_width = [self.columns.col_width.loc[col] for col in self.data.columns]
+
+    if 'output_dir' in self.meta.keys():
+      dir_name = f'{self.meta["output_dir"]}_{now()}'
+      if not path.exists( dir_name ):
+        mkdir( dir_name )
+    else:
+      dir_name = f'output/spreadsheets_{now()}'
+
+    titles = list(self.data.index.names) + self.data.columns.tolist()
+
+    filename = f'{dir_name}/{self.name}.xlsx'
+    filename_writable = False
+
+    loop_count = 0
+
+    while not filename_writable and loop_count < 20:
+      try:
+        writer = ExcelWriter( filename, engine='xlsxwriter')
+        filename_writable = True
+
+      except:
+        print( f'{filename} not accessible' )
+        filename = f'{filename[:-5]} (1).xlsx'
+      loop_count += 1
+
+    self.data.to_excel(writer, 'Sheet1', index=True, startrow=1, header=False )
+    workbook = writer.book
+    worksheet = writer.sheets[ 'Sheet1' ]
+    if not header is None:
+      worksheet.set_header( header )
+    if not footer is None:
+      worksheet.set_footer( footer )
+    if fit_to_columns:
+      worksheet.fit_to_pages(1, 0)
+    if col_color is None:
+      col_color = random_color()
+    header_format = workbook.add_format()
+    header_format.set_text_wrap()
+    header_format.set_align('top')
+    header_format.set_bold()
+    header_format.set_bg_color( col_color )
+    header_format.set_align('center')
+    header_format.set_border()
+    index_format = workbook.add_format()
+    index_format.set_align('top')
+    index_format.set_align('left')
+    index_format.set_bold()
+    index_format.set_border()
+    index_num_format = workbook.add_format()
+    index_num_format.set_bold()
+    index_num_format.set_border()
+    percent_format = workbook.add_format()
+    percent_format.set_num_format('0"%"')
+    dec_percent_format = workbook.add_format()
+    dec_percent_format.set_num_format('0.0"%"')
+    real_percent_format= workbook.add_format()
+    real_percent_format.set_num_format('0%')
+    real_dec_percent_format = workbook.add_format()
+    real_dec_percent_format.set_num_format('0.0%')
+    gbp_format = workbook.add_format()
+    gbp_format.set_num_format('"£"#,##0')
+    int_format = workbook.add_format()
+    int_format.set_num_format('#,##0')
+    dec_format = workbook.add_format()
+    dec_format.set_num_format('0.0')
+    str_format = workbook.add_format()
+    num_format = str_format
+    wrap_format = workbook.add_format()
+    wrap_format.set_text_wrap()
+
+
+    for i, cf in enumerate(col_format):
+      if cf[:3].lower() == 'int' or cf == 'int'[:len(cf)]:
+        num_format = int_format
+      if cf[:5].lower() == 'float':
+        num_format = dec_format
+      if cf.lower() == 'percent':
+        num_format = percent_format
+      if cf.lower() == 'dec_percent':
+        num_format = dec_percent_format
+      if cf.lower() == 'r_percent':
+        num_format = real_percent_format
+      if cf.lower() == 'r_dec_percent':
+        num_format = real_dec_percent_format
+      if cf.lower() == 'gbp':
+        num_format = gbp_format
+      if cf.lower() == 'wrap':
+        num_format = wrap_format
+      if index and i < len(self.data.index.names):
+        worksheet.set_column(i,i,col_width[i],index_num_format)
+      else:
+        worksheet.set_column(i,i,col_width[i],num_format)
+      worksheet.write(0, i, titles[i], header_format)
+    if freeze_cols is None:
+      if not index:
+        worksheet.freeze_panes(1, 1)
+      else:
+        worksheet.freeze_panes(1, len(self.data.index.names))
+    else:
+      worksheet.freeze_panes(1, freeze_cols )
+    if not(notes is None):
+      if type(notes) is str:
+        worksheet.write( self.data.shape[0] + 3, 0, notes )
+      if type(notes) is list:
+        for i, note in enumerate(notes):
+          worksheet.write( self.data.shape[0] + 3 + i, 0, note)
+    if wrap_cols != []:
+      for col in wrap_cols:
+        row_no = 1
+        for row in self.data.iterrows():
+          if not isnull( row[1][col] ):
+            worksheet.write( row_no, col, row[1][col], wrap_format)
+          row_no += 1
+    writer.save()
+
+
+
+def to_alphanumeric( text ):
 #  return sub('/^[a-z\d\-_\s]+$/i',' ',text).strip()
-  return sub(r'[^a-zA-Z0-9_ ]',r'',text).strip()
+  return sub(' +',' ', sub(r'[^a-zA-Z0-9_ ]',r'',text)).strip()
 
 
 def backup(self):
-  """Function: generates a backup of all the files in the instance directory
-
-  Output:
-    (tar.gz) backup saved in archive folder and datetime stamped
-  """
   files = [ f for f in listdir('.') if path.isfile(f) ]
   folders = [ f for f in listdir('.') if path.isdir(f) and f != 'archive' ]
-  tar = tarfile_open(f"archive/{self.meta['name']}_{now()}.gz")
+  tar = tarfile.open(f"archive/{self.meta['name']}_{now()}.gz")
 
   for folder in folders:
     tar.add( folder )
@@ -618,12 +724,11 @@ def backup(self):
 
 
 def now():
-  """Function: returns a datetime stamp
-  """
   return str(datetime.now())[:-7].replace('-','').replace(' ','_').replace(':','')
 
 def today():
-  """Function: returns a datetime stamp for today
-  """
   return datetime.today()
 
+def random_color():
+  rand = lambda: random.randint(170, 255)
+  return '#%02X%02X%02X' % (rand(), rand(), rand())
