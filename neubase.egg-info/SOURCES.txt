@@ -1,0 +1,6 @@
+setup.py
+neubase.egg-info/PKG-INFO
+neubase.egg-info/SOURCES.txt
+neubase.egg-info/dependency_links.txt
+neubase.egg-info/requires.txt
+neubase.egg-info/top_level.txt
