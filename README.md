@@ -1,0 +1,1 @@
+A wrapper for SQLite designed to hold tables from the DfE.
