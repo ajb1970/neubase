@@ -1,4 +1,7 @@
-from setuptools import setup
+from setuptools import find_packages, setup
+
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
 
 setup(
     # Needed to silence warnings (and to be a worthwhile package)
@@ -11,7 +14,7 @@ setup(
     # *strongly* suggested for sharing
     packages=['neubase'],
     package_dir={"": "src"},
-    packages=setuptools.find_packages(where="src"),
+    packages=find_packages(where="src"),
     version='0.1',
     # The license can be anything you like
     license='MIT',
