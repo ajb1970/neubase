@@ -284,7 +284,7 @@ class NEUTable():
     self.neubase.connect()
     self.meta = read_sql( f'SELECT key, value FROM __meta__ WHERE table_name="{self.name}"', self.neubase.connection, index_col='key' ).to_dict()['value']
     self.convert_meta_values_from_json()
-    self.columns = read_sql( f'SELECT * FROM __columns__ WHERE table_name="{self.name}"', self.neubase.connection, index_col='db_name' ).drop(columns=['table'])
+    self.columns = read_sql( f'SELECT * FROM __columns__ WHERE table_name="{self.name}"', self.neubase.connection, index_col='db_name' ).drop(columns=['table_name'])
     self.neubase.close()
 
 
