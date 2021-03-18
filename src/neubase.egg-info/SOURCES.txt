@@ -2,6 +2,7 @@ README.md
 setup.cfg
 setup.py
 src/neubase/__init__.py
+src/neubase/neubase.py
 src/neubase.egg-info/PKG-INFO
 src/neubase.egg-info/SOURCES.txt
 src/neubase.egg-info/dependency_links.txt
