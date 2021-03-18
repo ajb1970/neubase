@@ -12,7 +12,6 @@ setup(
     # Needed for dependencies
     install_requires=['pandas'],
     # *strongly* suggested for sharing
-    packages=['neubase'],
     package_dir={"": "src"},
     packages=find_packages(where="src"),
     version='0.1',
