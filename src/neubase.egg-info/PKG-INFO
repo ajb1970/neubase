@@ -1,0 +1,15 @@
+Metadata-Version: 2.1
+Name: neubase
+Version: 0.1
+Summary: A wrapper for SQLite databases and Pandas DataFrames intended to store DfE data tables.
+Home-page: https://github.com/ajb1970/neubase
+Author: Andrew Baisley
+Author-email: andrew.baisley@gmail.com
+License: MIT
+Description: A wrapper for SQLite designed to hold tables from the DfE.
+Platform: UNKNOWN
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
