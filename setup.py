@@ -10,7 +10,8 @@ setup(
     install_requires=['pandas'],
     # *strongly* suggested for sharing
     packages=['neubase'],
-    package_dir={'neubase': 'src/neubase'},
+    package_dir={"": "src"},
+    packages=setuptools.find_packages(where="src"),
     version='0.1',
     # The license can be anything you like
     license='MIT',
