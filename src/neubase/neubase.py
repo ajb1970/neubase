@@ -423,10 +423,19 @@ class NEUTable():
       self.neubase.connection.commit()
 
     self.create_meta_df().assign(table_name=lambda x: self.name).to_sql('__meta__', self.neubase.connection, if_exists='append')
+
+    self.neubase.list_tables()
+    if '__columns__' in self.neubase.table_list_full:
+      self.neubase.connect()
+      columns_dbcolumns=[col[1] for col in self.neubase.cursor.execute('pragma table_info(__columns__)').fetchall()]
+      for column in self.columns.columns:
+        if column not in columns_dbcolumns:
+          self.neubase.cursor.execute(f'ALTER TABLE __columns__ ADD {column};')
+      self.neubase.commit()
+      self.neubase.close()
     self.columns.assign(table_name=lambda x: self.name).to_sql('__columns__', self.neubase.connection, if_exists='append')
     self.neubase.close()
     self.neubase.list_tables()
-
 
   def update_meta_file(self, meta_file=None):
     if meta_file is None:
