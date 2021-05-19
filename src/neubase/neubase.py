@@ -70,7 +70,7 @@ class NEUBase():
                     'dtype':[],
                     'mc_display_order':[],
                     'mc_tag':[],
-                    'mc_dtypes':[],
+                    'mc_dtype':[],
                     'output_name':[],
                     'output_format':[],
                     'output_width':[],
@@ -497,7 +497,7 @@ class NEUTable():
         mc_names = [ to_alphanumeric( name.title() ).replace('_',' ') for name in db_names ]
         an_names = mc_names
         mc_tag = [ to_alphanumeric( name.upper() ).replace('_','') for name in db_names ]
-        mc_dtypes = []
+        mc_dtype = []
 
         dtypes = (
             [ self.data.index.dtype.name ] * len( self.data.index.names ) +
@@ -507,10 +507,10 @@ class NEUTable():
         for dtype in dtypes:
 
             if dtype == 'object':
-                mc_dtypes.append( 'text' )
+                mc_dtype.append( 'text' )
 
             else:
-                mc_dtypes.append( 'number' )
+                mc_dtype.append( 'number' )
 
         output_formats = []
 
@@ -535,7 +535,7 @@ class NEUTable():
                 'dtype': dtypes,
                 'mc_display_order': mc_col_nums,
                 'mc_tag': mc_tag,
-                'mc_dtypes': mc_dtypes,
+                'mc_dtype': mc_dtype,
                 'output_name': output_names,
                 'output_format': output_formats,
                 'output_width': [20] * len( input_names )
