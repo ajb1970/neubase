@@ -432,7 +432,6 @@ class NEUTable():
                 if column not in columns_dbcolumns:
                     self.neubase.cursor.execute(f'ALTER TABLE __columns__ ADD {column};')
             self.neubase.commit()
-            self.neubase.close()
         self.columns.assign(table_name=lambda x: self.name).to_sql('__columns__', self.neubase.connection, if_exists='append')
         self.neubase.close()
         self.neubase.list_tables()
